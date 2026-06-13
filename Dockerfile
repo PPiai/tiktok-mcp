@@ -1,51 +1,29 @@
-# TikTok MCP Server - Docker Image
+# TikTok MCP Server - Docker image (streamable-HTTP, pronto para Easypanel)
 FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOST=0.0.0.0 \
+    PORT=8000 \
+    MCP_TRANSPORT=streamable-http
 
 WORKDIR /app
 
-# Install system dependencies (playwright needs some)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy dependency files first (for caching)
-COPY pyproject.toml uv.lock* ./
-
-# Install uv and dependencies
-RUN pip install --no-cache-dir uv && \
-    uv sync --frozen --no-dev
-
-# Install playwright browsers
-RUN uv run playwright install chromium --with-deps
-
-# Copy source code
+# Metadados + codigo, depois instala o pacote (gera o console script tiktok-mcp)
+COPY pyproject.toml README.md ./
 COPY src/ ./src/
+RUN pip install --upgrade pip && pip install .
 
-# Create non-root user
+# Usuario nao-root
 RUN useradd -m -u 1000 mcpuser && chown -R mcpuser:mcpuser /app
 USER mcpuser
 
-# Environment variables
-ENV PYTHONUNBUFFERED=1
-ENV MCP_TRANSPORT=stdio
-ENV PLAYWRIGHT_BROWSERS_PATH=/home/mcpuser/.cache/ms-playwright
+EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import src.tiktok_mcp.server; print('OK')" || exit 1
+# Healthcheck: confere se a porta esta aceitando conexoes
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import socket,os; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', int(os.getenv('PORT','8000')))); s.close()" || exit 1
 
-# Run the MCP server
-ENTRYPOINT ["python", "-m", "src.tiktok_mcp.server"]
+# Inicia o servidor MCP (streamable-HTTP em 0.0.0.0:$PORT)
+CMD ["tiktok-mcp"]

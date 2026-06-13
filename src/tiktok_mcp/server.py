@@ -1,56 +1,51 @@
 """
-TikTok MCP Server - Main entry point
+TikTok MCP Server - Main entry point.
+
+Por padrao roda sobre streamable-HTTP, de modo que pode ser hospedado como
+servico de rede (Easypanel/Docker). Para uso local via stdio, defina a
+variavel de ambiente MCP_TRANSPORT=stdio.
 """
-import asyncio
 import os
-import sys
-from typing import Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import (
-    Tool,
-    TextContent,
-    CallToolResult,
-)
+from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
 
-from .tiktok_client import SyncTikTokClient
+from .tiktok_client import TikTokClient
 from .tools import register_tools
 
+# Carrega .env em desenvolvimento local (em producao usa env vars do container)
+load_dotenv()
 
-async def _async_main():
-    """Main async entry point for the TikTok MCP server."""
-    # Get credentials from environment
-    # Official API credentials (if available)
-    client_key = os.getenv("TIKTOK_CLIENT_KEY")
-    client_secret = os.getenv("TIKTOK_CLIENT_SECRET")
-    access_token = os.getenv("TIKTOK_ACCESS_TOKEN")
-    
-    # Initialize TikTok client (sync wrapper for MCP compatibility)
-    tiktok_client = SyncTikTokClient(
-        client_key=client_key,
-        client_secret=client_secret,
-        access_token=access_token,
+
+def build_server() -> FastMCP:
+    """Cria e configura a instancia do servidor MCP."""
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+
+    mcp = FastMCP(
+        "tiktok-mcp",
+        host=host,
+        port=port,
+        # Stateless: cada request e independente, ideal para deploy atras de
+        # proxy/load balancer (Easypanel) sem sessoes persistentes.
+        stateless_http=True,
     )
-    
-    # Create MCP server
-    server = Server("tiktok-mcp")
-    
-    # Register tools
-    register_tools(server, tiktok_client)
-    
-    # Run server
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+
+    client = TikTokClient(
+        client_key=os.getenv("TIKTOK_CLIENT_KEY"),
+        client_secret=os.getenv("TIKTOK_CLIENT_SECRET"),
+        access_token=os.getenv("TIKTOK_ACCESS_TOKEN"),
+    )
+
+    register_tools(mcp, client)
+    return mcp
 
 
 def main():
-    """Synchronous entry point for console script."""
-    asyncio.run(_async_main())
+    """Entry point do console script."""
+    transport = os.getenv("MCP_TRANSPORT", "streamable-http")
+    mcp = build_server()
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

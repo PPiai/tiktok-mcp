@@ -1,9 +1,7 @@
 """
 TikTok Client - Supports both Official API and Public Scraping
 """
-import asyncio
 import json
-import os
 import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
@@ -451,56 +449,3 @@ class TikTokClient:
                 continue
         
         return users
-
-
-# Synchronous wrapper for MCP compatibility
-class SyncTikTokClient:
-    """Synchronous wrapper for TikTokClient."""
-    
-    def __init__(self, client_key: Optional[str] = None, client_secret: Optional[str] = None, access_token: Optional[str] = None):
-        self._async_client = TikTokClient(client_key, client_secret, access_token)
-        self._loop = None
-    
-    def _get_loop(self):
-        """Get or create event loop."""
-        try:
-            return asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop
-    
-    def _run_async(self, coro):
-        """Run async coroutine synchronously."""
-        loop = self._get_loop()
-        return loop.run_until_complete(coro)
-    
-    # Delegate all methods
-    def search_videos(self, query: str, max_results: int = 20) -> Dict[str, Any]:
-        return self._run_async(self._async_client.search_videos(query, max_results))
-    
-    def get_trending_hashtags(self, region: str = "US") -> Dict[str, Any]:
-        return self._run_async(self._async_client.get_trending_hashtags(region))
-    
-    def get_trending_videos(self, region: str = "US", max_results: int = 20) -> Dict[str, Any]:
-        return self._run_async(self._async_client.get_trending_videos(region, max_results))
-    
-    def get_user_info(self, username: str) -> Dict[str, Any]:
-        return self._run_async(self._async_client.get_user_info(username))
-    
-    def get_user_videos(self, username: str, max_results: int = 20) -> Dict[str, Any]:
-        return self._run_async(self._async_client.get_user_videos(username, max_results))
-    
-    def get_video_details(self, video_id: str) -> Dict[str, Any]:
-        return self._run_async(self._async_client.get_video_details(video_id))
-    
-    def search_hashtag(self, hashtag: str, max_results: int = 20) -> Dict[str, Any]:
-        return self._run_async(self._async_client.search_hashtag(hashtag, max_results))
-    
-    def search_user(self, query: str, max_results: int = 20) -> Dict[str, Any]:
-        return self._run_async(self._async_client.search_user(query, max_results))
-    
-    def close(self):
-        """Close the client."""
-        if self._async_client:
-            self._run_async(self._async_client.close())

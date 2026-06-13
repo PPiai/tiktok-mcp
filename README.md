@@ -24,76 +24,118 @@ This server supports two modes:
 
 2. **Public Scraping** (fallback) - Works without API credentials but may be rate-limited or break if TikTok changes their frontend.
 
-## Installation
+## Transport
 
-```bash
-cd /opt/data/mcp-servers/tiktok-mcp
-pip install -e .
-```
-
-Or with uv:
-```bash
-uv pip install -e /opt/data/mcp-servers/tiktok-mcp
-```
+The server runs over **streamable-HTTP** by default, exposing the MCP endpoint at
+`/mcp` so it can be hosted as a network service (Easypanel/Docker). Set
+`MCP_TRANSPORT=stdio` to run over stdio for local subprocess use instead.
 
 ## Configuration
 
+Environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_TRANSPORT` | `streamable-http` | `streamable-http` (hosted) or `stdio` (local) |
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8000` | Listen port |
+| `TIKTOK_CLIENT_KEY` | — | Official API key (optional) |
+| `TIKTOK_CLIENT_SECRET` | — | Official API secret (optional) |
+| `TIKTOK_ACCESS_TOKEN` | — | Official API token (optional) |
+
 ### Official API (Recommended)
 
-Get credentials from [TikTok Developers](https://developers.tiktok.com/):
+Get credentials from [TikTok Developers](https://developers.tiktok.com/) and set the
+three `TIKTOK_*` variables. If they are not set, the server falls back to public scraping.
+
+## Local Development
 
 ```bash
-export TIKTOK_CLIENT_KEY="your_client_key"
-export TIKTOK_CLIENT_SECRET="your_client_secret"
-export TIKTOK_ACCESS_TOKEN="your_access_token"
+# Install (editable) with uv
+uv pip install -e .
+
+# Run (streamable-HTTP on http://0.0.0.0:8000/mcp)
+tiktok-mcp
+
+# Or over stdio
+MCP_TRANSPORT=stdio tiktok-mcp
 ```
 
-### Public Scraping (No credentials needed)
+## Docker
 
-Just don't set the environment variables - the server will automatically use public scraping.
-
-## Usage with Hermes Agent
-
-Add to your `~/.hermes/config.yaml`:
-
-```yaml
-mcp_servers:
-  tiktok:
-    command: "uvx"
-    args: ["tiktok-mcp"]
-    env:
-      TIKTOK_CLIENT_KEY: "your_client_key"
-      TIKTOK_CLIENT_SECRET: "your_client_secret"
-      TIKTOK_ACCESS_TOKEN: "your_access_token"
-    timeout: 120
-    connect_timeout: 60
+```bash
+docker build -t tiktok-mcp .
+docker run -p 8000:8000 \
+  -e TIKTOK_CLIENT_KEY=... \
+  -e TIKTOK_CLIENT_SECRET=... \
+  -e TIKTOK_ACCESS_TOKEN=... \
+  tiktok-mcp
 ```
 
-For public scraping mode (no credentials):
+The MCP endpoint will be available at `http://localhost:8000/mcp`.
 
-```yaml
-mcp_servers:
-  tiktok:
-    command: "uvx"
-    args: ["tiktok-mcp"]
-    timeout: 120
-    connect_timeout: 60
+## Deploy on Easypanel
+
+1. Create an **App** service pointing to this repository (or the GHCR image built by
+   the included CI workflow).
+2. Build method: **Dockerfile** (already in the repo root).
+3. Set the exposed/container port to **8000** and add a domain (Easypanel handles SSL).
+4. Add the `TIKTOK_*` environment variables under the service's **Environment** tab
+   (leave them empty to use public scraping).
+5. Deploy. The MCP endpoint will be served at `https://<your-domain>/mcp`.
+
+### Connecting an MCP client
+
+For a hosted HTTP server, connect via URL (not a spawned command). The exact config
+file depends on the client; the shape is the same:
+
+```json
+{
+  "mcpServers": {
+    "tiktok": {
+      "url": "https://<your-domain>/mcp"
+    }
+  }
+}
 ```
 
-Then restart Hermes Agent. The tools will be available as `mcp_tiktok_*`.
+- **Claude Desktop / Claude Code**: add the block above to the MCP config and restart.
+- **Hermes Agent**: point the `tiktok` server at the same `url`.
+
+Once connected, the tools appear to the model (e.g. `mcp_tiktok_search_videos`) and can
+be triggered with natural language — see [Example Queries](#example-queries).
+
+## Verify the endpoint
+
+After running locally or deploying, confirm the server is up with a raw MCP handshake.
+The streamable-HTTP endpoint requires both `application/json` and `text/event-stream`
+in the `Accept` header:
+
+```bash
+curl -i -X POST http://localhost:8000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"1.0"}}}'
+```
+
+A healthy server returns `HTTP/1.1 200 OK` and an SSE `data:` line containing
+`"serverInfo":{"name":"tiktok-mcp",...}`.
 
 ## Available Tools
 
-| Tool | Description |
-|------|-------------|
-| `search_videos` | Search videos by keyword |
-| `get_trending_hashtags` | Get trending hashtags by region |
-| `get_trending_videos` | Get trending videos |
-| `get_user_info` | Get user profile details |
-| `get_user_videos` | Get user's videos |
-| `get_video_details` | Get video details by ID |
-| `search_hashtag` | Get videos for a hashtag |
-| `search_users` | Search for users |
+All tools return a JSON text payload. When scraping is used (no official API
+credentials), responses include a `"source": "scraping"` field.
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `search_videos` | `query` (str, required), `max_results` (int, default 20) | Search videos by keyword |
+| `get_trending_hashtags` | `region` (str, default `US`) | Get trending hashtags by region |
+| `get_trending_videos` | `region` (str, default `US`), `max_results` (int, default 20) | Get trending videos |
+| `get_user_info` | `username` (str, required — with or without `@`) | Get user profile details |
+| `get_user_videos` | `username` (str, required), `max_results` (int, default 20) | Get a user's videos |
+| `get_video_details` | `video_id` (str, required) | Get video details by ID |
+| `search_hashtag` | `hashtag` (str, required — with or without `#`), `max_results` (int, default 20) | Get videos for a hashtag |
+| `search_users` | `query` (str, required), `max_results` (int, default 20) | Search for users |
 
 ## Example Queries
 
@@ -108,12 +150,12 @@ Then restart Hermes Agent. The tools will be available as `mcp_tiktok_*`.
 ## Development
 
 ```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
+# Install with dev dependencies
+uv pip install -e ".[dev]"
 ```
+
+> Note: an automated test suite is not included yet. Use the
+> [Verify the endpoint](#verify-the-endpoint) handshake to smoke-test changes.
 
 ## Important Notes
 
